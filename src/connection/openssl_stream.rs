@@ -48,8 +48,8 @@ impl From<ErrorStack> for Error {
 
 pub async fn create_secured_stream(conn: &Connection) -> Result<HttpStream, Error> {
     // openssl setup
-    #[cfg(feature = "log")]
-    log::trace!("Setting up TLS parameters for {}.", conn.request.url.host);
+    #[cfg(feature = "tracing")]
+    tracing::trace!("Setting up TLS parameters for {}.", conn.request.url.host);
     let connector = {
         let mut connector_builder = SslConnector::builder(SslMethod::tls())?;
         connector_builder.set_min_proto_version(Some(SslVersion::TLS1))?;
@@ -69,8 +69,8 @@ pub async fn create_secured_stream(conn: &Connection) -> Result<HttpStream, Erro
                     .filter_map(|b| X509::from_pem(&b).ok());
                 for cert in certs {
                     if let Err(_err) = connector_builder.cert_store_mut().add_cert(cert) {
-                        #[cfg(feature = "log")]
-                        log::debug!("load_android_root_certs error: {:?}", _err);
+                        #[cfg(feature = "tracing")]
+                        tracing::debug!("load_android_root_certs error: {:?}", _err);
                     }
                 }
             }
@@ -80,13 +80,13 @@ pub async fn create_secured_stream(conn: &Connection) -> Result<HttpStream, Erro
     };
 
     // Connect
-    #[cfg(feature = "log")]
-    log::trace!("Establishing TCP connection to {}.", conn.request.url.host);
+    #[cfg(feature = "tracing")]
+    tracing::trace!("Establishing TCP connection to {}.", conn.request.url.host);
     let tcp = conn.connect().await?;
 
     // Send request
-    #[cfg(feature = "log")]
-    log::trace!("Establishing TLS session to {}.", conn.request.url.host);
+    #[cfg(feature = "tracing")]
+    tracing::trace!("Establishing TLS session to {}.", conn.request.url.host);
     let ssl = connector
         .use_server_name_indication(true)
         .verify_hostname(true)
@@ -96,8 +96,8 @@ pub async fn create_secured_stream(conn: &Connection) -> Result<HttpStream, Erro
         Err(err) => return Err(Error::IoError(io::Error::new(io::ErrorKind::Other, err))),
     };
 
-    #[cfg(feature = "log")]
-    log::trace!("Writing HTTPS request to {}.", conn.request.url.host);
+    #[cfg(feature = "tracing")]
+    tracing::trace!("Writing HTTPS request to {}.", conn.request.url.host);
     tls.write_all(&conn.request.as_bytes()).await?;
 
     Ok(HttpStream::create_secured(tls, conn.timeout_at))

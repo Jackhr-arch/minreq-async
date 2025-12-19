@@ -136,8 +136,8 @@ impl Connection {
             ))]
             let secured_stream = openssl_stream::create_secured_stream(&self).await?;
 
-            #[cfg(feature = "log")]
-            log::trace!("Reading HTTPS response from {}.", self.request.url.host);
+            #[cfg(feature = "tracing")]
+            tracing::trace!("Reading HTTPS response from {}.", self.request.url.host);
             let response = ResponseLazy::from_stream(
                 secured_stream,
                 self.request.config.max_headers_size,
@@ -158,19 +158,19 @@ impl Connection {
             self.request.url.host = ensure_ascii_host(self.request.url.host)?;
             let bytes = self.request.as_bytes();
 
-            #[cfg(feature = "log")]
-            log::trace!("Establishing TCP connection to {}.", self.request.url.host);
+            #[cfg(feature = "tracing")]
+            tracing::trace!("Establishing TCP connection to {}.", self.request.url.host);
             let mut tcp = self.connect().await?;
 
             // Send request
-            #[cfg(feature = "log")]
-            log::trace!("Writing HTTP request.");
+            #[cfg(feature = "tracing")]
+            tracing::trace!("Writing HTTP request.");
             use tokio::io::AsyncWriteExt;
             tcp.write_all(&bytes).await?;
 
             // Receive response
-            #[cfg(feature = "log")]
-            log::trace!("Reading HTTP response.");
+            #[cfg(feature = "tracing")]
+            tracing::trace!("Reading HTTP response.");
             let stream = HttpStream::create_unsecured(tcp, self.timeout_at);
             let response = ResponseLazy::from_stream(
                 stream,
@@ -278,8 +278,8 @@ fn get_redirect(mut connection: Connection, status_code: i32, url: Option<&Strin
                 None => return NextHop::Redirect(Err(Error::RedirectLocationMissing)),
             };
 
-            #[cfg(feature = "log")]
-            log::debug!("Redirecting ({}) to: {}", status_code, url);
+            #[cfg(feature = "tracing")]
+            tracing::debug!("Redirecting ({}) to: {}", status_code, url);
 
             match connection.request.redirect_to(url.as_str()) {
                 Ok(()) => {

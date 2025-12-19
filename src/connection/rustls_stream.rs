@@ -35,8 +35,8 @@ static CONFIG: std::sync::LazyLock<Result<Arc<ClientConfig>, rustls::Error>> =
 
 pub async fn create_secured_stream(conn: &Connection) -> Result<HttpStream, Error> {
     // Rustls setup
-    #[cfg(feature = "log")]
-    log::trace!("Setting up TLS parameters for {}.", conn.request.url.host);
+    #[cfg(feature = "tracing")]
+    tracing::trace!("Setting up TLS parameters for {}.", conn.request.url.host);
     let dns_name: ServerName<'static> = match ServerName::try_from(conn.request.url.host.clone()) {
         Ok(result) => result,
         Err(err) => return Err(Error::IoError(io::Error::new(io::ErrorKind::Other, err))),
@@ -44,16 +44,16 @@ pub async fn create_secured_stream(conn: &Connection) -> Result<HttpStream, Erro
     let connecter = TlsConnector::from(CONFIG.clone().map_err(Error::RustlsCreateConnection)?);
 
     // Connect
-    #[cfg(feature = "log")]
-    log::trace!("Establishing TCP connection to {}.", conn.request.url.host);
+    #[cfg(feature = "tracing")]
+    tracing::trace!("Establishing TCP connection to {}.", conn.request.url.host);
     let tcp = conn.connect().await?;
 
     // Send request
-    #[cfg(feature = "log")]
-    log::trace!("Establishing TLS session to {}.", conn.request.url.host);
+    #[cfg(feature = "tracing")]
+    tracing::trace!("Establishing TLS session to {}.", conn.request.url.host);
     let mut tls = connecter.connect(dns_name, tcp).await?;
-    #[cfg(feature = "log")]
-    log::trace!("Writing HTTPS request to {}.", conn.request.url.host);
+    #[cfg(feature = "tracing")]
+    tracing::trace!("Writing HTTPS request to {}.", conn.request.url.host);
     tls.write_all(&conn.request.as_bytes()).await?;
     tls.flush().await?;
 

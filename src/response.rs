@@ -271,7 +271,7 @@ impl AsyncRead for ResponseLazy {
                 let to_go = buf.remaining().min(*content_length);
                 let fut = this.stream.read_exact(buf.initialize_unfilled_to(to_go));
                 let size = ready!(std::pin::pin!(fut).poll(cx))?;
-                buf.set_filled(buf.filled().len() + size);
+                buf.advance(size);
                 *content_length -= size;
                 std::task::Poll::Ready(Ok(()))
             }
@@ -371,7 +371,7 @@ async fn read_chunked(
     let to_go = buf.remaining().min(*current_chunk_length);
     let fut = stream.read_exact(buf.initialize_unfilled_to(to_go));
     let size = fut.await?;
-    buf.set_filled(buf.filled().len() + size);
+    buf.advance(size);
     *current_chunk_length -= size;
 
     // If we're at the end of the chunk...
