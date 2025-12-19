@@ -110,8 +110,9 @@
 //! or something could go wrong during the download.
 //!
 //! ```
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let response = minreq::get("http://example.com").send()?;
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let response = minreq::get("http://example.com").send().await?;
 //! assert!(response.as_str()?.contains("</html>"));
 //! assert_eq!(200, response.status_code);
 //! assert_eq!("OK", response.reason_phrase);
@@ -128,10 +129,11 @@
 //! `send()`.
 //!
 //! ```
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let response = minreq::post("http://example.com")
 //!     .with_body("Foobar")
-//!     .send()?;
+//!     .send().await?;
 //! # Ok(()) }
 //! ```
 //!
@@ -141,10 +143,11 @@
 //! `send()`.
 //!
 //! ```
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let response = minreq::get("http://example.com")
 //!     .with_header("Accept", "text/html")
-//!     .send()?;
+//!     .send().await?;
 //! # Ok(()) }
 //! ```
 //!
@@ -158,8 +161,9 @@
 //! this unifies the casings for easier `get()`ing.
 //!
 //! ```
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let response = minreq::get("http://example.com").send()?;
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let response = minreq::get("http://example.com").send().await?;
 //! assert!(response.headers.get("content-type").unwrap().starts_with("text/html"));
 //! # Ok(()) }
 //! ```
@@ -172,10 +176,11 @@
 //! NOTE: There is no timeout by default.
 //!
 //! ```no_run
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let response = minreq::post("http://example.com")
 //!     .with_timeout(10)
-//!     .send()?;
+//!     .send().await?;
 //! # Ok(()) }
 //! ```
 //!
@@ -189,13 +194,14 @@
 //! supported at this time.
 //!
 //! ```no_run
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! #[cfg(feature = "proxy")]
 //! {
 //!     let proxy = minreq::Proxy::new("localhost:8080")?;
 //!     let response = minreq::post("http://example.com")
 //!         .with_proxy(proxy)
-//!         .send()?;
+//!         .send().await?;
 //!     println!("{}", response.as_str()?);
 //! }
 //! # Ok(()) }
@@ -209,7 +215,7 @@
 //! - Use [`with_timeout`](struct.Request.html#method.with_timeout) on
 //!   your request to set the timeout per-request like so:
 //!   ```
-//!   minreq::get("/").with_timeout(8).send();
+//!   minreq::get("/").with_timeout(8);
 //!   ```
 //! - Set the environment variable `MINREQ_TIMEOUT` to the desired
 //!   amount of seconds until timeout. Ie. if you have a program called

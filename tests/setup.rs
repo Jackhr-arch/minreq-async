@@ -1,6 +1,3 @@
-// Can't fix before an MSRV bump: inlined format args were added after 1.48.0.
-#![allow(clippy::uninlined_format_args)]
-
 extern crate minreq;
 extern crate tiny_http;
 use self::tiny_http::{Header, Method, Response, Server, StatusCode};
@@ -44,12 +41,12 @@ pub fn setup() {
 
                     Method::Get if url == "/slow_a" => {
                         thread::sleep(Duration::from_secs(2));
-                        let response = Response::from_string(format!("j: {}", content));
+                        let response = Response::from_string(format!("j: {content}"));
                         request.respond(response).ok();
                     }
 
                     Method::Get if url == "/a" => {
-                        let response = Response::from_string(format!("j: {}", content));
+                        let response = Response::from_string(format!("j: {content}"));
                         request.respond(response).ok();
                     }
                     Method::Post if url == "/a" => {
@@ -135,31 +132,31 @@ pub fn setup() {
                         request.respond(Response::empty(418)).ok();
                     }
                     Method::Post if url == "/c" => {
-                        let response = Response::from_string(format!("l: {}", content));
+                        let response = Response::from_string(format!("l: {content}"));
                         request.respond(response).ok();
                     }
                     Method::Put if url == "/d" => {
-                        let response = Response::from_string(format!("m: {}", content));
+                        let response = Response::from_string(format!("m: {content}"));
                         request.respond(response).ok();
                     }
                     Method::Delete if url == "/e" => {
-                        let response = Response::from_string(format!("n: {}", content));
+                        let response = Response::from_string(format!("n: {content}"));
                         request.respond(response).ok();
                     }
                     Method::Trace if url == "/f" => {
-                        let response = Response::from_string(format!("o: {}", content));
+                        let response = Response::from_string(format!("o: {content}"));
                         request.respond(response).ok();
                     }
                     Method::Options if url == "/g" => {
-                        let response = Response::from_string(format!("p: {}", content));
+                        let response = Response::from_string(format!("p: {content}"));
                         request.respond(response).ok();
                     }
                     Method::Connect if url == "/h" => {
-                        let response = Response::from_string(format!("q: {}", content));
+                        let response = Response::from_string(format!("q: {content}"));
                         request.respond(response).ok();
                     }
                     Method::Patch if url == "/i" => {
-                        let response = Response::from_string(format!("r: {}", content));
+                        let response = Response::from_string(format!("r: {content}"));
                         request.respond(response).ok();
                     }
 
@@ -175,7 +172,7 @@ pub fn setup() {
 }
 
 pub fn url(req: &str) -> String {
-    format!("http://localhost:35562{}", req)
+    format!("http://localhost:35562{req}")
 }
 
 pub fn get_body(request: Result<minreq::Response, minreq::Error>) -> String {
@@ -183,12 +180,12 @@ pub fn get_body(request: Result<minreq::Response, minreq::Error>) -> String {
         Ok(response) => match response.as_str() {
             Ok(str) => String::from(str),
             Err(err) => {
-                println!("\n[ERROR]: {}\n", err);
+                println!("\n[ERROR]: {err}\n");
                 String::new()
             }
         },
         Err(err) => {
-            println!("\n[ERROR]: {}\n", err);
+            println!("\n[ERROR]: {err}\n");
             String::new()
         }
     }
@@ -198,7 +195,7 @@ pub fn get_status_code(request: Result<minreq::Response, minreq::Error>) -> i32 
     match request {
         Ok(response) => response.status_code,
         Err(err) => {
-            println!("\n[ERROR]: {}\n", err);
+            println!("\n[ERROR]: {err}\n");
             -1
         }
     }

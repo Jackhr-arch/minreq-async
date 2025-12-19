@@ -1,9 +1,12 @@
 use crate::request::ParsedRequest;
 use crate::{Error, Method, ResponseLazy};
 use std::env;
-use std::io::{self, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::future::Future;
+use std::io;
+use std::net::ToSocketAddrs;
 use std::time::{Duration, Instant};
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::net::TcpStream;
 
 type UnsecuredStream = TcpStream;
 
@@ -30,6 +33,21 @@ mod openssl_stream;
 ))]
 type SecuredStream = openssl_stream::SecuredStream;
 
+macro_rules! timeout_at {
+    ($future:expr, $deadline:expr) => {
+        async {
+            if let Some(deadline) = $deadline {
+                tokio::time::timeout_at(deadline.into(), $future)
+                    .await
+                    .map_err(|_| timeout_err().into())
+                    .flatten()
+            } else {
+                $future.await
+            }
+        }
+    };
+}
+
 pub(crate) enum HttpStream {
     Unsecured(UnsecuredStream, Option<Instant>),
     #[cfg(any(feature = "rustls", feature = "native-tls", feature = "openssl",))]
@@ -37,13 +55,13 @@ pub(crate) enum HttpStream {
 }
 
 impl HttpStream {
-    fn create_unsecured(reader: UnsecuredStream, timeout_at: Option<Instant>) -> HttpStream {
-        HttpStream::Unsecured(reader, timeout_at)
+    fn create_unsecured(stream: UnsecuredStream, timeout_at: Option<Instant>) -> HttpStream {
+        HttpStream::Unsecured(stream, timeout_at)
     }
 
     #[cfg(any(feature = "rustls", feature = "native-tls", feature = "openssl"))]
-    fn create_secured(reader: SecuredStream, timeout_at: Option<Instant>) -> HttpStream {
-        HttpStream::Secured(Box::new(reader), timeout_at)
+    fn create_secured(stream: SecuredStream, timeout_at: Option<Instant>) -> HttpStream {
+        HttpStream::Secured { stream, timeout_at }
     }
 }
 
@@ -54,42 +72,19 @@ fn timeout_err() -> io::Error {
     )
 }
 
-fn timeout_at_to_duration(timeout_at: Option<Instant>) -> Result<Option<Duration>, io::Error> {
-    if let Some(timeout_at) = timeout_at {
-        if let Some(duration) = timeout_at.checked_duration_since(Instant::now()) {
-            Ok(Some(duration))
-        } else {
-            Err(timeout_err())
-        }
-    } else {
-        Ok(None)
-    }
-}
-
-impl Read for HttpStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let timeout = |tcp: &TcpStream, timeout_at: Option<Instant>| -> io::Result<()> {
-            let _ = tcp.set_read_timeout(timeout_at_to_duration(timeout_at)?);
-            Ok(())
-        };
-
-        let result = match self {
-            HttpStream::Unsecured(inner, timeout_at) => {
-                timeout(inner, *timeout_at)?;
-                inner.read(buf)
+impl AsyncRead for HttpStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        match self.get_mut() {
+            HttpStream::Unsecured(ref mut stream, timeout_at) => {
+                let fut = timeout_at!(stream.read_buf(buf), *timeout_at);
+                std::pin::pin!(fut).poll(cx).map_ok(|_| ())
             }
-            #[cfg(any(feature = "rustls", feature = "openssl", feature = "native-tls"))]
-            HttpStream::Secured(inner, timeout_at) => {
-                timeout(inner.get_ref(), *timeout_at)?;
-                inner.read(buf)
-            }
-        };
-        match result {
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                // We're a blocking socket, so EWOULDBLOCK indicates a timeout
-                Err(timeout_err())
-            }
-            r => r,
+            #[cfg(any(feature = "rustls", feature = "native-tls", feature = "openssl",))]
+            HttpStreamProj::Secured { stream, timeout_at } => todo!(),
         }
     }
 }
@@ -117,18 +112,6 @@ impl Connection {
             request,
             timeout_at,
         }
-    }
-
-    /// Returns the timeout duration for operations that should end at
-    /// timeout and are starting "now".
-    ///
-    /// The Result will be Err if the timeout has already passed.
-    fn timeout(&self) -> Result<Option<Duration>, io::Error> {
-        let timeout = timeout_at_to_duration(self.timeout_at);
-
-        #[cfg(feature = "log")]
-        log::trace!("Timeout requested, it is currently: {:?}", timeout);
-        timeout
     }
 
     /// Sends the [`Request`](struct.Request.html), consumes this
@@ -163,20 +146,21 @@ impl Connection {
 
     /// Sends the [`Request`](struct.Request.html), consumes this
     /// connection, and returns a [`Response`](struct.Response.html).
-    pub(crate) fn send(mut self) -> Result<ResponseLazy, Error> {
-        enforce_timeout(self.timeout_at, move || {
+    pub(crate) async fn send(mut self) -> Result<ResponseLazy, Error> {
+        let timeout_at = self.timeout_at;
+        let fut = async {
             self.request.url.host = ensure_ascii_host(self.request.url.host)?;
             let bytes = self.request.as_bytes();
 
             #[cfg(feature = "log")]
             log::trace!("Establishing TCP connection to {}.", self.request.url.host);
-            let mut tcp = self.connect()?;
+            let mut tcp = self.connect().await?;
 
             // Send request
             #[cfg(feature = "log")]
             log::trace!("Writing HTTP request.");
-            let _ = tcp.set_write_timeout(self.timeout()?);
-            tcp.write_all(&bytes)?;
+            use tokio::io::AsyncWriteExt;
+            tcp.write_all(&bytes).await?;
 
             // Receive response
             #[cfg(feature = "log")]
@@ -186,13 +170,15 @@ impl Connection {
                 stream,
                 self.request.config.max_headers_size,
                 self.request.config.max_status_line_len,
-            )?;
-            handle_redirects(self, response)
-        })
+            )
+            .await?;
+            handle_redirects(self, response).await
+        };
+        timeout_at!(fut, timeout_at).await
     }
 
-    fn connect(&self) -> Result<TcpStream, Error> {
-        let tcp_connect = |host: &str, port: u32| -> Result<TcpStream, Error> {
+    async fn connect(&self) -> Result<TcpStream, Error> {
+        let tcp_connect = async |host: &str, port: u32| -> Result<TcpStream, Error> {
             let addrs = (host, port as u16)
                 .to_socket_addrs()
                 .map_err(Error::IoError)?;
@@ -201,11 +187,7 @@ impl Connection {
             // Try all resolved addresses. Return the first one to which we could connect. If all
             // failed return the last error encountered.
             for (i, addr) in addrs.enumerate() {
-                let stream = if let Some(timeout) = self.timeout()? {
-                    TcpStream::connect_timeout(&addr, timeout)
-                } else {
-                    TcpStream::connect(addr)
-                };
+                let stream = TcpStream::connect(addr).await;
                 if stream.is_ok() || i == addrs_count - 1 {
                     return stream.map_err(Error::from);
                 }
@@ -242,11 +224,11 @@ impl Connection {
         }
 
         #[cfg(not(feature = "proxy"))]
-        tcp_connect(&self.request.url.host, self.request.url.port.port())
+        tcp_connect(&self.request.url.host, self.request.url.port.port()).await
     }
 }
 
-fn handle_redirects(
+async fn handle_redirects(
     connection: Connection,
     mut response: ResponseLazy,
 ) -> Result<ResponseLazy, Error> {
@@ -265,7 +247,7 @@ fn handle_redirects(
                 #[cfg(any(feature = "rustls", feature = "openssl", feature = "native-tls"))]
                 return connection.send_https();
             } else {
-                connection.send()
+                Box::pin(connection.send()).await
             }
         }
         NextHop::Destination(connection) => {
@@ -339,44 +321,5 @@ fn ensure_ascii_host(host: String) -> Result<String, Error> {
             result.truncate(result.len() - 1); // Remove the trailing dot
             Ok(result)
         }
-    }
-}
-
-/// Enforce the timeout by running the function in a new thread and
-/// parking the current one with a timeout.
-///
-/// While minreq does use timeouts (somewhat) properly, some
-/// interfaces such as [ToSocketAddrs] don't allow for specifying the
-/// timeout. Hence this.
-fn enforce_timeout<F, R>(timeout_at: Option<Instant>, f: F) -> Result<R, Error>
-where
-    F: 'static + Send + FnOnce() -> Result<R, Error>,
-    R: 'static + Send,
-{
-    use std::sync::mpsc::{channel, RecvTimeoutError};
-
-    match timeout_at {
-        Some(deadline) => {
-            let (sender, receiver) = channel();
-            let thread = std::thread::spawn(move || {
-                let result = f();
-                let _ = sender.send(());
-                result
-            });
-            if let Some(timeout_duration) = deadline.checked_duration_since(Instant::now()) {
-                match receiver.recv_timeout(timeout_duration) {
-                    Ok(()) => thread.join().unwrap(),
-                    Err(err) => match err {
-                        RecvTimeoutError::Timeout => Err(Error::IoError(timeout_err())),
-                        RecvTimeoutError::Disconnected => {
-                            Err(Error::Other("request connection paniced"))
-                        }
-                    },
-                }
-            } else {
-                Err(Error::IoError(timeout_err()))
-            }
-        }
-        None => f(),
     }
 }
