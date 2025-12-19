@@ -6,7 +6,7 @@ use std::io;
 
 #[tokio::test]
 #[ignore]
-#[cfg(any(feature = "rustls", feature = "openssl", feature = "native-tls"))]
+#[cfg(any(feature = "rustls", feature = "openssl", feature = "https-native"))]
 async fn test_https() {
     // TODO: Implement this locally.
     assert_eq!(
@@ -93,12 +93,7 @@ async fn test_get() {
 #[tokio::test]
 async fn test_redirect_get() {
     setup();
-    let body = get_body(
-        minreq::get(url("/redirect"))
-            .with_body("Q")
-            .send()
-            .await,
-    );
+    let body = get_body(minreq::get(url("/redirect")).with_body("Q").send().await);
     assert_eq!(body, "j: Q");
 }
 
@@ -109,12 +104,7 @@ async fn test_redirect_post() {
     // make a GET request to the given location. This test relies on
     // the fact that the test server only responds to GET requests on
     // the /a path.
-    let body = get_body(
-        minreq::post(url("/redirect"))
-            .with_body("Q")
-            .send()
-            .await,
-    );
+    let body = get_body(minreq::post(url("/redirect")).with_body("Q").send().await);
     assert_eq!(body, "j: Q");
 }
 
@@ -158,10 +148,7 @@ async fn test_relative_redirect_get() {
 #[tokio::test]
 async fn test_head() {
     setup();
-    assert_eq!(
-        get_status_code(minreq::head(url("/b")).send().await),
-        418
-    );
+    assert_eq!(get_status_code(minreq::head(url("/b")).send().await), 418);
 }
 
 #[tokio::test]
@@ -181,10 +168,7 @@ async fn test_put() {
 #[tokio::test]
 async fn test_delete() {
     setup();
-    assert_eq!(
-        get_body(minreq::delete(url("/e")).send().await),
-        "n: "
-    );
+    assert_eq!(get_body(minreq::delete(url("/e")).send().await), "n: ");
 }
 
 #[tokio::test]
@@ -237,10 +221,7 @@ async fn test_header_cap() {
         .send()
         .await;
     assert!(body.is_err());
-    assert!(matches!(
-        body.err(),
-        Some(minreq::Error::HeadersOverflow)
-    ));
+    assert!(matches!(body.err(), Some(minreq::Error::HeadersOverflow)));
 
     let body = minreq::get(url("/long_header"))
         .with_max_headers_size(1500)
@@ -278,9 +259,7 @@ async fn test_massive_content_length() {
     setup();
     task::spawn(async {
         // If minreq trusts Content-Length, this should crash pretty much straight away.
-        let _ = minreq::get(url("/massive_content_length"))
-            .send()
-            .await;
+        let _ = minreq::get(url("/massive_content_length")).send().await;
     });
 
     sleep(Duration::from_millis(500)).await;

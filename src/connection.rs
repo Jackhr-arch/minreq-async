@@ -15,20 +15,20 @@ mod rustls_stream;
 #[cfg(feature = "rustls")]
 type SecuredStream = rustls_stream::SecuredStream;
 
-#[cfg(all(not(feature = "rustls"), feature = "native-tls"))]
+#[cfg(all(not(feature = "rustls"), feature = "https-native"))]
 mod native_tls_stream;
-#[cfg(all(not(feature = "rustls"), feature = "native-tls"))]
+#[cfg(all(not(feature = "rustls"), feature = "https-native"))]
 type SecuredStream = native_tls_stream::SecuredStream;
 
 #[cfg(all(
     not(feature = "rustls"),
-    not(feature = "native-tls"),
+    not(feature = "https-native"),
     feature = "openssl",
 ))]
 mod openssl_stream;
 #[cfg(all(
     not(feature = "rustls"),
-    not(feature = "native-tls"),
+    not(feature = "https-native"),
     feature = "openssl",
 ))]
 type SecuredStream = openssl_stream::SecuredStream;
@@ -50,7 +50,7 @@ macro_rules! timeout_at {
 
 pub(crate) enum HttpStream {
     Unsecured(UnsecuredStream, Option<Instant>),
-    #[cfg(any(feature = "rustls", feature = "native-tls", feature = "openssl",))]
+    #[cfg(any(feature = "rustls", feature = "https-native", feature = "openssl",))]
     Secured(Box<SecuredStream>, Option<Instant>),
 }
 
@@ -59,9 +59,9 @@ impl HttpStream {
         HttpStream::Unsecured(stream, timeout_at)
     }
 
-    #[cfg(any(feature = "rustls", feature = "native-tls", feature = "openssl"))]
+    #[cfg(any(feature = "rustls", feature = "https-native", feature = "openssl"))]
     fn create_secured(stream: SecuredStream, timeout_at: Option<Instant>) -> HttpStream {
-        HttpStream::Secured { stream, timeout_at }
+        HttpStream::Secured(Box::new(stream), timeout_at)
     }
 }
 
@@ -83,8 +83,11 @@ impl AsyncRead for HttpStream {
                 let fut = timeout_at!(stream.read_buf(buf), *timeout_at);
                 std::pin::pin!(fut).poll(cx).map_ok(|_| ())
             }
-            #[cfg(any(feature = "rustls", feature = "native-tls", feature = "openssl",))]
-            HttpStreamProj::Secured { stream, timeout_at } => todo!(),
+            #[cfg(any(feature = "rustls", feature = "https-native", feature = "openssl",))]
+            HttpStream::Secured(ref mut stream, timeout_at) => {
+                let fut = timeout_at!(stream.read_buf(buf), *timeout_at);
+                std::pin::pin!(fut).poll(cx).map_ok(|_| ())
+            }
         }
     }
 }
@@ -116,18 +119,19 @@ impl Connection {
 
     /// Sends the [`Request`](struct.Request.html), consumes this
     /// connection, and returns a [`Response`](struct.Response.html).
-    #[cfg(any(feature = "rustls", feature = "native-tls", feature = "openssl",))]
-    pub(crate) fn send_https(mut self) -> Result<ResponseLazy, Error> {
-        enforce_timeout(self.timeout_at, move || {
+    #[cfg(any(feature = "rustls", feature = "https-native", feature = "openssl",))]
+    pub(crate) async fn send_https(mut self) -> Result<ResponseLazy, Error> {
+        let timeout_at = self.timeout_at;
+        let fut = async {
             self.request.url.host = ensure_ascii_host(self.request.url.host)?;
 
             #[cfg(feature = "rustls")]
             let secured_stream = rustls_stream::create_secured_stream(&self)?;
-            #[cfg(all(not(feature = "rustls"), feature = "native-tls"))]
-            let secured_stream = native_tls_stream::create_secured_stream(&self)?;
+            #[cfg(all(not(feature = "rustls"), feature = "https-native"))]
+            let secured_stream = native_tls_stream::create_secured_stream(&self).await?;
             #[cfg(all(
                 not(feature = "rustls"),
-                not(feature = "native-tls"),
+                not(feature = "https-native"),
                 feature = "openssl",
             ))]
             let secured_stream = openssl_stream::create_secured_stream(&self)?;
@@ -138,10 +142,12 @@ impl Connection {
                 secured_stream,
                 self.request.config.max_headers_size,
                 self.request.config.max_status_line_len,
-            )?;
+            )
+            .await?;
 
-            handle_redirects(self, response)
-        })
+            handle_redirects(self, response).await
+        };
+        timeout_at!(fut, timeout_at).await
     }
 
     /// Sends the [`Request`](struct.Request.html), consumes this
@@ -241,11 +247,11 @@ async fn handle_redirects(
                 #[cfg(not(any(
                     feature = "rustls",
                     feature = "openssl",
-                    feature = "native-tls"
+                    feature = "https-native"
                 )))]
                 return Err(Error::HttpsFeatureNotEnabled);
-                #[cfg(any(feature = "rustls", feature = "openssl", feature = "native-tls"))]
-                return connection.send_https();
+                #[cfg(any(feature = "rustls", feature = "openssl", feature = "https-native"))]
+                return Box::pin(connection.send_https()).await;
             } else {
                 Box::pin(connection.send()).await
             }
