@@ -134,7 +134,7 @@ impl Connection {
                 not(feature = "https-native"),
                 feature = "openssl",
             ))]
-            let secured_stream = openssl_stream::create_secured_stream(&self)?;
+            let secured_stream = openssl_stream::create_secured_stream(&self).await?;
 
             #[cfg(feature = "log")]
             log::trace!("Reading HTTPS response from {}.", self.request.url.host);
