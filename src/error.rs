@@ -14,9 +14,9 @@ pub enum Error {
     /// conversion failed.
     InvalidUtf8InBody(str::Utf8Error),
 
-    #[cfg(feature = "rustls")]
+    #[cfg(feature = "tokio-rustls")]
     /// Ran into a rustls error while creating the connection.
-    RustlsCreateConnection(rustls::Error),
+    RustlsCreateConnection(tokio_rustls::rustls::Error),
     // TODO: Add separate errors for openssl and native_tls errors as well
     /// Ran into an IO problem while loading the response.
     IoError(io::Error),
@@ -94,7 +94,7 @@ impl fmt::Display for Error {
             IoError(err) => write!(f, "{}", err),
             InvalidUtf8InBody(err) => write!(f, "{}", err),
 
-            #[cfg(feature = "rustls")]
+            #[cfg(feature = "tokio-rustls")]
             RustlsCreateConnection(err) => write!(f, "error creating rustls connection: {}", err),
             MalformedChunkLength => write!(f, "non-usize chunk length with transfer-encoding: chunked"),
             MalformedChunkEnd => write!(f, "chunk did not end after reading the expected amount of bytes"),
@@ -129,7 +129,7 @@ impl error::Error for Error {
             SerdeJsonError(err) => Some(err),
             IoError(err) => Some(err),
             InvalidUtf8InBody(err) => Some(err),
-            #[cfg(feature = "rustls")]
+            #[cfg(feature = "https-rustls")]
             RustlsCreateConnection(err) => Some(err),
             _ => None,
         }

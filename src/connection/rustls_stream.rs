@@ -1,74 +1,61 @@
 //! TLS connection handling functionality when using the `rustls` crate for
 //! handling TLS.
 
-use rustls::{self, ClientConfig, ClientConnection, RootCertStore, ServerName, StreamOwned};
+#[cfg(feature = "https-rustls-probe")]
+use rustls_platform_verifier::BuilderVerifierExt;
 use std::convert::TryFrom;
-use std::io::{self, Write};
-use std::net::TcpStream;
+use std::io;
 use std::sync::Arc;
-#[cfg(feature = "rustls-webpki")]
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
+use tokio_rustls::rustls::{self, pki_types::ServerName, ClientConfig};
+use tokio_rustls::{client::TlsStream, TlsConnector};
+#[cfg(feature = "https-rustls")]
 use webpki_roots::TLS_SERVER_ROOTS;
+
+#[cfg(all(feature = "https-rustls-probe", feature = "https-rustls"))]
+compile_error!("currently, there is not way to get them work at same time");
 
 use crate::Error;
 
 use super::{Connection, HttpStream};
 
-pub type SecuredStream = StreamOwned<ClientConnection, TcpStream>;
+pub type SecuredStream = TlsStream<TcpStream>;
 
-static CONFIG: std::sync::LazyLock<Arc<ClientConfig>> = std::sync::LazyLock::new(|| {
-    let mut root_certificates = RootCertStore::empty();
+static CONFIG: std::sync::LazyLock<Result<Arc<ClientConfig>, rustls::Error>> =
+    std::sync::LazyLock::new(|| {
+        #[cfg(feature = "https-rustls-probe")]
+        let builder = ClientConfig::builder().with_platform_verifier()?;
+        #[cfg(feature = "https-rustls")]
+        let builder = ClientConfig::builder().with_root_certificates(rustls::RootCertStore {
+            roots: TLS_SERVER_ROOTS.to_vec(),
+        });
+        Ok(Arc::new(builder.with_no_client_auth()))
+    });
 
-    // Try to load native certs
-    #[cfg(feature = "https-rustls-probe")]
-    if let Ok(os_roots) = rustls_native_certs::load_native_certs() {
-        for root_cert in os_roots {
-            // Ignore erroneous OS certificates, there's nothing
-            // to do differently in that situation anyways.
-            let _ = root_certificates.add(&rustls::Certificate(root_cert.0));
-        }
-    }
-
-    #[cfg(feature = "rustls-webpki")]
-    #[allow(deprecated)] // Need to use add_server_trust_anchors to compile with rustls 0.21.1
-    root_certificates.add_server_trust_anchors(TLS_SERVER_ROOTS.iter().map(|ta| {
-        rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
-            ta.subject,
-            ta.spki,
-            ta.name_constraints,
-        )
-    }));
-
-    let config = ClientConfig::builder()
-        .with_safe_defaults()
-        .with_root_certificates(root_certificates)
-        .with_no_client_auth();
-    Arc::new(config)
-});
-
-pub fn create_secured_stream(conn: &Connection) -> Result<HttpStream, Error> {
+pub async fn create_secured_stream(conn: &Connection) -> Result<HttpStream, Error> {
     // Rustls setup
     #[cfg(feature = "log")]
     log::trace!("Setting up TLS parameters for {}.", conn.request.url.host);
-    let dns_name = match ServerName::try_from(&*conn.request.url.host) {
+    let dns_name: ServerName<'static> = match ServerName::try_from(conn.request.url.host.clone()) {
         Ok(result) => result,
         Err(err) => return Err(Error::IoError(io::Error::new(io::ErrorKind::Other, err))),
     };
-    let sess =
-        ClientConnection::new(CONFIG.clone(), dns_name).map_err(Error::RustlsCreateConnection)?;
+    let connecter = TlsConnector::from(CONFIG.clone().map_err(Error::RustlsCreateConnection)?);
 
     // Connect
     #[cfg(feature = "log")]
     log::trace!("Establishing TCP connection to {}.", conn.request.url.host);
-    let tcp = conn.connect()?;
+    let tcp = conn.connect().await?;
 
     // Send request
     #[cfg(feature = "log")]
     log::trace!("Establishing TLS session to {}.", conn.request.url.host);
-    let mut tls = StreamOwned::new(sess, tcp); // I don't think this actually does any communication.
+    let mut tls = connecter.connect(dns_name, tcp).await?;
     #[cfg(feature = "log")]
     log::trace!("Writing HTTPS request to {}.", conn.request.url.host);
-    let _ = tls.get_ref().set_write_timeout(conn.timeout()?);
-    tls.write_all(&conn.request.as_bytes())?;
+    tls.write_all(&conn.request.as_bytes()).await?;
+    tls.flush().await?;
 
     Ok(HttpStream::create_secured(tls, conn.timeout_at))
 }
