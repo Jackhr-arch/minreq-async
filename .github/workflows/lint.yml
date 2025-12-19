@@ -19,7 +19,7 @@ jobs:
       # https://github.com/dtolnay/rust-toolchain
       uses: dtolnay/rust-toolchain@stable
     - name: Run rustfmt
-      run: rustfmt --check src/lib.rs
+      run: rustfmt --check src/lib.rs --edition 2018
     - name: Run cargo doc
       run: cargo doc --features "punycode proxy json-using-serde https"
     - name: Run clippy

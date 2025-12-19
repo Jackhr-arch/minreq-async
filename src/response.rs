@@ -146,7 +146,8 @@ impl Response {
     /// ```no_run
     /// use serde_json::Value;
     ///
-    /// # fn main() -> Result<(), minreq::Error> {
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), minreq::Error> {
     /// # let url_to_json_resource = "http://example.org/resource.json";
     /// // Value could be any type that implements Deserialize!
     /// let user = minreq::get(url_to_json_resource).send().await?.json::<Value>()?;
