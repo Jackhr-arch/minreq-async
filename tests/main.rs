@@ -6,7 +6,11 @@ use std::io;
 
 #[tokio::test]
 #[ignore]
-#[cfg(any(feature = "tokio-rustls", feature = "openssl", feature = "https-native"))]
+#[cfg(any(
+    feature = "tokio-rustls",
+    feature = "openssl",
+    feature = "https-native"
+))]
 async fn test_https() {
     // TODO: Implement this locally.
     assert_eq!(

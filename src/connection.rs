@@ -50,7 +50,11 @@ macro_rules! timeout_at {
 
 pub(crate) enum HttpStream {
     Unsecured(UnsecuredStream, Option<Instant>),
-    #[cfg(any(feature = "tokio-rustls", feature = "https-native", feature = "openssl",))]
+    #[cfg(any(
+        feature = "tokio-rustls",
+        feature = "https-native",
+        feature = "openssl",
+    ))]
     Secured(Box<SecuredStream>, Option<Instant>),
 }
 
@@ -59,7 +63,11 @@ impl HttpStream {
         HttpStream::Unsecured(stream, timeout_at)
     }
 
-    #[cfg(any(feature = "tokio-rustls", feature = "https-native", feature = "openssl"))]
+    #[cfg(any(
+        feature = "tokio-rustls",
+        feature = "https-native",
+        feature = "openssl"
+    ))]
     fn create_secured(stream: SecuredStream, timeout_at: Option<Instant>) -> HttpStream {
         HttpStream::Secured(Box::new(stream), timeout_at)
     }
@@ -83,7 +91,11 @@ impl AsyncRead for HttpStream {
                 let fut = timeout_at!(stream.read_buf(buf), *timeout_at);
                 std::pin::pin!(fut).poll(cx).map_ok(|_| ())
             }
-            #[cfg(any(feature = "tokio-rustls", feature = "https-native", feature = "openssl",))]
+            #[cfg(any(
+                feature = "tokio-rustls",
+                feature = "https-native",
+                feature = "openssl",
+            ))]
             HttpStream::Secured(ref mut stream, timeout_at) => {
                 let fut = timeout_at!(stream.read_buf(buf), *timeout_at);
                 std::pin::pin!(fut).poll(cx).map_ok(|_| ())
@@ -119,7 +131,11 @@ impl Connection {
 
     /// Sends the [`Request`](struct.Request.html), consumes this
     /// connection, and returns a [`Response`](struct.Response.html).
-    #[cfg(any(feature = "tokio-rustls", feature = "https-native", feature = "openssl",))]
+    #[cfg(any(
+        feature = "tokio-rustls",
+        feature = "https-native",
+        feature = "openssl",
+    ))]
     pub(crate) async fn send_https(mut self) -> Result<ResponseLazy, Error> {
         let timeout_at = self.timeout_at;
         let fut = async {
@@ -206,27 +222,24 @@ impl Connection {
         match self.request.config.proxy {
             Some(ref proxy) => {
                 // do proxy things
-                let mut tcp = tcp_connect(&proxy.server, proxy.port)?;
 
-                write!(tcp, "{}", proxy.connect(&self.request)).unwrap();
-                tcp.flush()?;
+                use tokio::io::AsyncWriteExt;
+                let mut tcp = tcp_connect(&proxy.server, proxy.port).await?;
+
+                tcp.write_all(proxy.connect(&self.request).as_bytes())
+                    .await
+                    .unwrap();
+                tcp.flush().await?;
 
                 let mut proxy_response = Vec::new();
 
-                loop {
-                    let mut buf = vec![0; 256];
-                    let total = tcp.read(&mut buf)?;
-                    proxy_response.append(&mut buf);
-                    if total < 256 {
-                        break;
-                    }
-                }
+                tcp.read_to_end(&mut proxy_response).await?;
 
                 crate::Proxy::verify_response(&proxy_response)?;
 
                 Ok(tcp)
             }
-            None => tcp_connect(&self.request.url.host, self.request.url.port.port()),
+            None => tcp_connect(&self.request.url.host, self.request.url.port.port()).await,
         }
 
         #[cfg(not(feature = "proxy"))]
@@ -250,7 +263,11 @@ async fn handle_redirects(
                     feature = "https-native"
                 )))]
                 return Err(Error::HttpsFeatureNotEnabled);
-                #[cfg(any(feature = "tokio-rustls", feature = "openssl", feature = "https-native"))]
+                #[cfg(any(
+                    feature = "tokio-rustls",
+                    feature = "openssl",
+                    feature = "https-native"
+                ))]
                 return Box::pin(connection.send_https()).await;
             } else {
                 Box::pin(connection.send()).await
